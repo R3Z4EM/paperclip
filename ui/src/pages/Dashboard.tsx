@@ -1,7 +1,7 @@
 import { AgentIdentity } from "../components/AgentIdentity";
 import { TaskSummaryList } from "../components/TaskSummaryList";
 import { useDesignSandbox } from "../context/DesignSandboxContext";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useLocation } from "@/lib/router";
 import {
   onboardingStepForCompany,
@@ -42,6 +42,12 @@ import type { Agent, Issue } from "@paperclipai/shared";
 import { PluginSlotOutlet } from "@/plugins/slots";
 import { SmokeLabDashboardCard } from "../components/SmokeLabDashboardCard";
 import { AiAccountsCard } from "../components/AiAccountsCard";
+import {
+  DashboardCustomizeButton,
+  resolveDashboardLayout,
+  useDashboardLayout,
+  type DashboardCardId,
+} from "../components/DashboardCustomizeDialog";
 
 const DASHBOARD_ACTIVITY_LIMIT = 10;
 
@@ -209,6 +215,8 @@ export function Dashboard() {
     enabled: !!selectedCompanyId,
   });
 
+  const { data: savedLayout } = useDashboardLayout(selectedCompanyId);
+
   const userProfileMap = useMemo(
     () => buildCompanyUserProfileMap(companyMembers?.users),
     [companyMembers?.users],
@@ -327,6 +335,10 @@ export function Dashboard() {
 
   return (
     <div className="space-y-6">
+      <div className="flex justify-end">
+        <DashboardCustomizeButton companyId={selectedCompanyId} />
+      </div>
+
       {error && <p className="text-sm text-destructive">{error.message}</p>}
 
       {pausedBanner?.kind === "imported" ? (
@@ -379,29 +391,35 @@ export function Dashboard() {
         </div>
       )}
 
-      <ActiveAgentsPanel companyId={selectedCompanyId!} dedupeLinkedTasks />
-
-      {data && (
-        <>
-          {data.budgets.activeIncidents > 0 ? (
-            <div className="flex items-start justify-between gap-3 rounded-xl border border-red-500/20 bg-(image:--gradient-extract-1) px-4 py-3">
-              <div className="flex items-start gap-2.5">
-                <PauseCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-700 dark:text-red-300" />
-                <div>
-                  <p className="text-sm font-medium text-red-950 dark:text-red-50">
-                    {data.budgets.activeIncidents} active budget incident{data.budgets.activeIncidents === 1 ? "" : "s"}
-                  </p>
-                  <p className="text-xs text-red-900/70 dark:text-red-100/70">
-                    {data.budgets.pausedAgents} agents paused · {data.budgets.pausedProjects} projects paused · {data.budgets.pendingApprovals} pending budget approvals
-                  </p>
-                </div>
-              </div>
-              <Link to="/costs" className="text-sm underline underline-offset-2 text-red-900 dark:text-red-100">
-                Open budgets
-              </Link>
+      {data && data.budgets.activeIncidents > 0 ? (
+        <div className="flex items-start justify-between gap-3 rounded-xl border border-red-500/20 bg-(image:--gradient-extract-1) px-4 py-3">
+          <div className="flex items-start gap-2.5">
+            <PauseCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-700 dark:text-red-300" />
+            <div>
+              <p className="text-sm font-medium text-red-950 dark:text-red-50">
+                {data.budgets.activeIncidents} active budget incident{data.budgets.activeIncidents === 1 ? "" : "s"}
+              </p>
+              <p className="text-xs text-red-900/70 dark:text-red-100/70">
+                {data.budgets.pausedAgents} agents paused · {data.budgets.pausedProjects} projects paused · {data.budgets.pendingApprovals} pending budget approvals
+              </p>
             </div>
-          ) : null}
+          </div>
+          <Link to="/costs" className="text-sm underline underline-offset-2 text-red-900 dark:text-red-100">
+            Open budgets
+          </Link>
+        </div>
+      ) : null}
 
+      {renderCards()}
+    </div>
+  );
+
+  // Each card by id; the Customize button sets their order and which are hidden.
+  function renderCard(id: DashboardCardId): ReactNode {
+    if (id === "active-agents") return <ActiveAgentsPanel companyId={selectedCompanyId!} dedupeLinkedTasks />;
+    if (!data) return null;
+    switch (id) {
+      case "metrics": return (
           <div className={cn("grid grid-cols-2 xl:grid-cols-4", designSandbox ? "gap-4" : "gap-1 sm:gap-2")}>
             <MetricCard
               appearance={designSandbox ? "card" : "plain"}
@@ -459,11 +477,10 @@ export function Dashboard() {
               }
             />
           </div>
-
-          <SmokeLabDashboardCard companyId={selectedCompanyId!} />
-
-          <AiAccountsCard companyId={selectedCompanyId!} />
-
+      );
+      case "smoke-lab": return <SmokeLabDashboardCard companyId={selectedCompanyId!} />;
+      case "ai-accounts": return <AiAccountsCard companyId={selectedCompanyId!} />;
+      case "charts": return (
           <div className={cn("grid grid-cols-2 gap-4", SHOW_TASK_PRIORITY_UI ? "lg:grid-cols-4" : "lg:grid-cols-3")}>
             <ChartCard title="Run Activity" subtitle="Last 14 days">
               <RunActivityChart activity={data.runActivity} />
@@ -481,7 +498,8 @@ export function Dashboard() {
               <SuccessRateChart activity={data.runActivity} />
             </ChartCard>
           </div>
-
+      );
+      case "plugin-widgets": return (
           <PluginSlotOutlet
             slotTypes={["dashboardWidget"]}
             context={{ companyId: selectedCompanyId }}
@@ -489,10 +507,8 @@ export function Dashboard() {
             // design-allow(card-pattern): class-string prop consumed by the plugin outlet; a component can't be passed here (C5a Run 3)
             itemClassName="rounded-lg border bg-card p-4 shadow-sm"
           />
-
-          <div className="grid md:grid-cols-2 gap-4">
-            {/* Recent Activity */}
-            {recentActivity.length > 0 && (
+      );
+      case "recent-activity": return recentActivity.length > 0 && (
               <div className="min-w-0">
                 <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-3">
                   Recent Activity
@@ -511,9 +527,8 @@ export function Dashboard() {
                   ))}
                 </Card>
               </div>
-            )}
-
-            {/* Recent Tasks */}
+      );
+      case "recent-tasks": return (
             <div className="min-w-0">
               <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-3">
                 Recent Tasks
@@ -565,10 +580,28 @@ export function Dashboard() {
                 </Card>
               )}
             </div>
-          </div>
+      );
+    }
+  }
 
-        </>
-      )}
-    </div>
-  );
+  // Visible cards in order; half-width cards next to each other share a two-column row.
+  function renderCards() {
+    const rows: { half: boolean; ids: DashboardCardId[] }[] = [];
+    for (const card of resolveDashboardLayout(savedLayout)) {
+      if (!card.visible) continue;
+      const half = "half" in card && card.half;
+      const last = rows[rows.length - 1];
+      if (half && last?.half) last.ids.push(card.id);
+      else rows.push({ half, ids: [card.id] });
+    }
+    return rows.map((row) =>
+      row.half ? (
+        <div key={row.ids.join()} className="grid md:grid-cols-2 gap-4">
+          {row.ids.map((id) => <Fragment key={id}>{renderCard(id)}</Fragment>)}
+        </div>
+      ) : (
+        <Fragment key={row.ids[0]}>{renderCard(row.ids[0])}</Fragment>
+      ),
+    );
+  }
 }

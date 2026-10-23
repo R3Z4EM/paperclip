@@ -6,7 +6,8 @@ import {
   MAX_WINDOW_WEEKS,
   recoveryObservabilityService,
 } from "../services/recovery-observability.js";
-import { assertCompanyAccess } from "./authz.js";
+import { getDashboardLayout, parseDashboardLayout, saveDashboardLayout } from "../services/dashboard-layouts.js";
+import { assertBoard, assertCompanyAccess } from "./authz.js";
 
 function parsePositiveNumber(
   value: unknown,
@@ -29,6 +30,36 @@ export function dashboardRoutes(db: Db) {
     assertCompanyAccess(req, companyId);
     const summary = await svc.summary(companyId);
     res.json(summary);
+  });
+
+  // The signed-in person's own card layout (Customize button); null until they change it.
+  router.get("/companies/:companyId/dashboard-layout/me", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    assertBoard(req);
+    if (!req.actor.userId) {
+      res.status(403).json({ error: "Board user context required" });
+      return;
+    }
+    res.json({ layout: await getDashboardLayout(companyId, req.actor.userId) });
+  });
+
+  // Body { layout: { order, hidden } } saves it; { layout: null } resets to the default layout.
+  router.put("/companies/:companyId/dashboard-layout/me", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    assertBoard(req);
+    if (!req.actor.userId) {
+      res.status(403).json({ error: "Board user context required" });
+      return;
+    }
+    const raw = req.body?.layout;
+    const layout = raw === null ? null : parseDashboardLayout(raw);
+    if (raw !== null && !layout) {
+      res.status(400).json({ error: "layout must be { order: string[], hidden: string[] } or null" });
+      return;
+    }
+    res.json({ layout: await saveDashboardLayout(companyId, req.actor.userId, layout) });
   });
 
   router.get("/companies/:companyId/recovery-observability", async (req, res) => {
