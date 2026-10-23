@@ -16,6 +16,21 @@ import type {
 } from "@paperclipai/shared";
 import { api } from "./client";
 
+/** A Claude subscription account's saved usage (server/src/services/ai-account-usage.ts). */
+export type AiAccountUsageWindow = { usedPercent: number | null; resetsAt: string | null };
+export type AiAccountUsage = {
+  connectionId: string;
+  name: string;
+  status: "ok" | "needs_sign_in" | "unavailable" | "error";
+  message: string | null;
+  plan: string | null;
+  lastSyncedAt: string | null;
+  lastAttemptAt: string | null;
+  session: AiAccountUsageWindow | null;
+  weekly: AiAccountUsageWindow | null;
+  history: { at: string; session: number | null; weekly: number | null }[];
+};
+
 function dateParams(from?: string, to?: string): string {
   const params = new URLSearchParams();
   if (!from && !to) params.set("period", "all");
@@ -56,6 +71,8 @@ export const costsApi = {
     api.get<CostWindowSpendRow[]>(`/companies/${companyId}/costs/window-spend`),
   quotaWindows: (companyId: string) =>
     api.get<ProviderQuotaResult[]>(`/companies/${companyId}/costs/quota-windows`),
+  aiAccounts: (companyId: string) =>
+    api.get<AiAccountUsage[]>(`/companies/${companyId}/costs/ai-accounts`),
 };
 
 function dateParamsWithLimit(from?: string, to?: string, limit?: number): string {

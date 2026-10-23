@@ -22,6 +22,7 @@ import { clearIdleBackupWakeRequired, idleBackupWakeMarker, markIdleBackupWakeRe
 import { cloudWarmStandbyServerOptions } from "./middleware/cloud-warm-standby.js";
 import { createCloudWarmStandby } from "./services/cloud-warm-standby.js";
 import { chatCompletionDeliveryService } from "./services/chat-completion-delivery.js";
+import { AI_ACCOUNT_USAGE_SYNC_INTERVAL_MS, aiAccountUsageInboxNotice, syncAllAiAccountUsage } from "./services/ai-account-usage.js";
 /// <reference path="./types/express.d.ts" />
 // Kicks off the OTel bootstrap as early as possible (no-op unless
 // OTEL_EXPORTER_OTLP_ENDPOINT is set). startServer() awaits
@@ -1297,6 +1298,21 @@ async function startServerWithDatabaseTeardown(
   nativeHarnessBackupExpirationInterval.unref?.();
   const nativeHarnessBackupExpirationStartup = setTimeout(sweepNativeHarnessBackups, NATIVE_HARNESS_BACKUP_EXPIRATION_STARTUP_DELAY_MS);
   nativeHarnessBackupExpirationStartup.unref?.();
+  // Claude account usage for the Dashboard's "AI accounts" card and the Costs page (ai-account-usage.ts).
+  let aiAccountUsageInFlight = false;
+  const syncAiAccountUsage = () => {
+    if (aiAccountUsageInFlight || isIdleTaskDrainActive() || heartbeatSchedulerStopped || isWarmStandby()) return;
+    aiAccountUsageInFlight = true;
+    trackHeartbeatSchedulerWork(syncAllAiAccountUsage(db as any, aiAccountUsageInboxNotice(db as any))
+      .catch((err) => {
+        logger.error({ err }, "AI account usage sync failed");
+      })
+      .finally(() => { aiAccountUsageInFlight = false; }));
+  };
+  const aiAccountUsageInterval = setInterval(syncAiAccountUsage, AI_ACCOUNT_USAGE_SYNC_INTERVAL_MS);
+  aiAccountUsageInterval.unref?.();
+  const aiAccountUsageStartup = setTimeout(syncAiAccountUsage, 60_000);
+  aiAccountUsageStartup.unref?.();
   const externalObjects = externalObjectService(db as any, {
     pluginWorkerManager,
     enabled: async () => (await instanceSettingsService(db).getExperimental()).enableExternalObjects === true,
@@ -2086,6 +2102,8 @@ async function startServerWithDatabaseTeardown(
     clearInterval(nativeHarnessBackupExpirationInterval);
     clearTimeout(nativeHarnessBackupExpirationStartup);
     clearTimeout(nativeHarnessBackupExpirationContinuation);
+    clearInterval(aiAccountUsageInterval);
+    clearTimeout(aiAccountUsageStartup);
     await skillVersionRetention.dispose();
     await skillSourceSync.stop();
     unsubscribeChatCompletions();

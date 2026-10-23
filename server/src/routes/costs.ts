@@ -33,6 +33,7 @@ import {
 } from "../services/index.js";
 import { assertBoard, assertCompanyAccess, getAccessibleResource, getActorInfo } from "./authz.js";
 import { fetchCompanyQuotaWindows } from "../services/quota-windows.js";
+import { listAiAccountUsage } from "../services/ai-account-usage.js";
 import { badRequest, forbidden } from "../errors.js";
 import type { PluginWorkerManager } from "../services/plugin-worker-manager.js";
 
@@ -341,6 +342,19 @@ export function costRoutes(
     }
     const results = await fetchCompanyQuotaWindows(db, companyId, getActorInfo(req).actorId);
     res.json(results);
+  });
+
+  // Claude subscription usage saved by the background sync (ai-account-usage.ts); never calls a provider.
+  router.get("/companies/:companyId/costs/ai-accounts", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    assertBoard(req);
+    const company = await companies.getById(companyId);
+    if (!company) {
+      res.status(404).json({ error: "Company not found" });
+      return;
+    }
+    res.json(await listAiAccountUsage(db, companyId, getActorInfo(req).actorId));
   });
 
   router.get("/companies/:companyId/budgets/overview", async (req, res) => {
