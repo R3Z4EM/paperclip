@@ -249,6 +249,19 @@ export function aiConnectionService(db: Db) {
       ? await claudeUsageToken(row.connection.id) : null;
     return { ...identity, ...await probeAiConnectionUsage(metadata.data, usageToken ?? value) };
   }
+  /** A Claude subscription connection this user may use, for its usage-only sign-in (claude-usage-login.ts). */
+  async function usageLoginConnection(companyId: string, userId: string, connectionId: string): Promise<string> {
+    if (!(await membership(companyId, userId))) throw forbidden("An active company member is required");
+    const candidates = (await rows(companyId)).filter((row) => row.connection.id === connectionId);
+    const audience = await db.select().from(connectionGrantMembers).where(eq(connectionGrantMembers.companyId, companyId));
+    const visible = candidates.filter(({ grant }) => canUseCredential(grant, userId, audience.filter((member) => member.grantId === grant.id)));
+    if (!visible.length) throw notFound("AI connection not found");
+    const metadata = aiConnectionMetadataSchema.safeParse(visible[0]!.connection.config.ai);
+    if (!metadata.success || metadata.data.provider !== "anthropic" || metadata.data.method !== "subscription") {
+      throw unprocessable("Usage sign-in is only for Claude subscriptions");
+    }
+    return visible[0]!.connection.id;
+  }
   async function select(input: {
     companyId: string;
     userId: string | null;
@@ -1166,5 +1179,5 @@ export function aiConnectionService(db: Db) {
       return [{ ...row, summary }];
     });
   }
-  return { list, selectDecision, selectFastResponse, selectPromptInjectionPrevention, quotaAccounts, subscriptionAccounts: (companyId: string, userId: string) => quotaAccounts(companyId, userId, true), refreshQuotaCredential, select, credential, runtimeCredential, probeUsage, save, setDefault, membership, markAuthenticationFailed };
+  return { list, selectDecision, selectFastResponse, selectPromptInjectionPrevention, quotaAccounts, usageLoginConnection, subscriptionAccounts: (companyId: string, userId: string) => quotaAccounts(companyId, userId, true), refreshQuotaCredential, select, credential, runtimeCredential, probeUsage, save, setDefault, membership, markAuthenticationFailed };
 }

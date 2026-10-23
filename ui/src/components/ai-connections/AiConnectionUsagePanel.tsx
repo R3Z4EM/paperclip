@@ -1,8 +1,10 @@
-import { useMutation } from "@tanstack/react-query";
+import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { AiConnectionUsage, AiConnectionUsageLimit, AiManagedConnectionSummary } from "@paperclipai/shared";
 import { supportsAiConnectionUsage } from "@paperclipai/shared";
 import { aiConnectionsApi } from "@/api/ai-connections";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { QuotaBar } from "@/components/QuotaBar";
 import { formatDateTime, formatNumber } from "@/lib/utils";
 
@@ -72,6 +74,60 @@ function usageError(usage: AiConnectionUsage) {
   }
 }
 
+/**
+ * Usage-only sign-in for a Claude subscription. Its own Paperclip credential is a setup token, which
+ * Anthropic doesn't let read usage; a normal claude.ai sign-in can. The server keeps that sign-in only
+ * for "Check usage" and the quota windows and renews it; agents never use it.
+ */
+function ClaudeUsageSignIn({ account, onConnected }: { account: AiManagedConnectionSummary; onConnected: () => void }) {
+  const client = useQueryClient();
+  const key = ["ai-connections", account.companyId, account.id, "usage-login"];
+  const status = useQuery({ queryKey: key, queryFn: () => aiConnectionsApi.usageLogin(account.companyId, account.id) });
+  const [signIn, setSignIn] = useState<{ sessionId: string; authorizationUrl: string } | null>(null);
+  const [code, setCode] = useState("");
+  const start = useMutation({
+    mutationFn: () => aiConnectionsApi.startUsageLogin(account.companyId, account.id),
+    onSuccess: (result) => { setSignIn(result); setCode(""); },
+  });
+  const finish = useMutation({
+    mutationFn: () => aiConnectionsApi.completeUsageLogin(account.companyId, account.id, signIn!.sessionId, code),
+    onSuccess: () => { setSignIn(null); setCode(""); void client.invalidateQueries({ queryKey: key }); onConnected(); },
+  });
+  const remove = useMutation({
+    mutationFn: () => aiConnectionsApi.removeUsageLogin(account.companyId, account.id),
+    onSuccess: () => void client.invalidateQueries({ queryKey: key }),
+  });
+  const error = start.error ?? finish.error ?? remove.error;
+  const connected = status.data?.connected === true;
+  return (
+    <div className="space-y-2 rounded-md border border-border p-3" aria-label="Usage sign-in">
+      {!signIn && <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs text-muted-foreground">
+          {connected
+            ? `Usage sign-in connected${status.data?.plan ? ` (${status.data.plan})` : ""}. Paperclip renews it; agents don't use it.`
+            : "To show this account's limits, sign in to claude.ai once as this account. Agents keep their own sign-in."}
+        </p>
+        <div className="flex gap-2">
+          {connected && <Button variant="ghost" size="sm" disabled={remove.isPending} onClick={() => remove.mutate()}>Remove</Button>}
+          <Button variant="outline" size="sm" disabled={start.isPending || status.isLoading} onClick={() => start.mutate()}>
+            {start.isPending ? "Starting…" : connected ? "Sign in again" : "Sign in for usage"}
+          </Button>
+        </div>
+      </div>}
+      {signIn && <form className="space-y-2" onSubmit={(event) => { event.preventDefault(); if (code.trim()) finish.mutate(); }}>
+        <p className="text-xs">1. <a className="font-medium underline" href={signIn.authorizationUrl} target="_blank" rel="noreferrer">Open claude.ai sign-in</a>, make sure you are signed in as <span className="font-medium">{account.name}</span>&apos;s account, and approve.</p>
+        <p className="text-xs">2. Paste the code claude.ai shows:</p>
+        <div className="flex gap-2">
+          <Input value={code} onChange={(event) => setCode(event.target.value)} placeholder="Code from claude.ai" autoComplete="off" spellCheck={false} aria-label="Code from claude.ai" />
+          <Button type="submit" size="sm" disabled={!code.trim() || finish.isPending}>{finish.isPending ? "Connecting…" : "Connect"}</Button>
+          <Button type="button" variant="ghost" size="sm" disabled={finish.isPending} onClick={() => { setSignIn(null); setCode(""); }}>Cancel</Button>
+        </div>
+      </form>}
+      {error && <p role="alert" className="text-sm text-destructive">{error.message}</p>}
+    </div>
+  );
+}
+
 export function AiConnectionUsagePanel({ account, observation, cachedOnly = false }: { account: AiManagedConnectionSummary; observation?: AiConnectionUsage; cachedOnly?: boolean }) {
   const probe = useMutation({
     mutationFn: () => aiConnectionsApi.probeUsage(account.companyId, account.id, account.grantId),
@@ -86,6 +142,8 @@ export function AiConnectionUsagePanel({ account, observation, cachedOnly = fals
           {probe.isPending ? "Checking…" : usage?.status === "ok" ? "Refresh" : "Check usage"}
         </Button>}
       </div>
+      {!cachedOnly && account.provider === "anthropic" && account.method === "subscription" &&
+        <ClaudeUsageSignIn account={account} onConnected={() => probe.mutate()} />}
       {cachedOnly && !usage && <p className="text-xs text-muted-foreground">Usage not observed.</p>}
       {!supported && <p className="text-xs text-muted-foreground">Unavailable for this sign-in method.</p>}
       {probe.error && <p role="alert" className="text-sm text-destructive">{probe.error.message}</p>}

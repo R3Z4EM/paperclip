@@ -32,6 +32,8 @@ import { accessService } from "../services/access.js";
 import { logActivity } from "../services/activity-log.js";
 import { aiConnectionRouterService } from "../services/ai-connection-router.js";
 import { aiConnectionService } from "../services/ai-connections.js";
+import { claudeUsageLoginStatus, completeClaudeUsageLogin, removeClaudeUsageLogin, startClaudeUsageLogin }
+  from "../services/claude-usage-login.js";
 import { validate } from "../middleware/validate.js";
 import { probeCopilotConnection } from "../services/copilot-connection-probe.js";
 import type { PluginWorkerManager } from "../services/plugin-worker-manager.js";
@@ -247,6 +249,54 @@ export function aiConnectionRoutes(db: Db, options: Parameters<typeof supportsLo
       res.json(await service.probeUsage(companyId, getActorInfo(req).actorId, connectionId.data, grantId.data));
     },
   );
+  // Usage-only Claude sign-in (services/claude-usage-login.ts): lets "Check usage" and the quota
+  // windows read a Claude subscription's limits, which its setup-token credential may not.
+  async function usageLoginTarget(req: Request, change: boolean) {
+    const companyId = req.params.companyId as string;
+    assertBoard(req);
+    assertCompanyAccess(req, companyId);
+    if (change && req.actor.memberships?.some((m) => m.companyId === companyId && m.membershipRole === "viewer")) {
+      throw forbidden("Viewers cannot change usage sign-in");
+    }
+    const connectionId = z.string().uuid().safeParse(req.params.connectionId);
+    if (!connectionId.success) throw unprocessable("Invalid connection ID");
+    const userId = getActorInfo(req).actorId;
+    await service.usageLoginConnection(companyId, userId, connectionId.data);
+    return { companyId, userId, connectionId: connectionId.data };
+  }
+  const usageLoginFailure = (error: unknown) => unprocessable(error instanceof Error ? error.message : "Usage sign-in failed");
+  router.get("/companies/:companyId/ai-connections/:connectionId/usage-login", async (req, res) => {
+    const target = await usageLoginTarget(req, false);
+    res.setHeader("Cache-Control", "no-store");
+    res.json(await claudeUsageLoginStatus(target.connectionId));
+  });
+  router.post("/companies/:companyId/ai-connections/:connectionId/usage-login", async (req, res) => {
+    const target = await usageLoginTarget(req, true);
+    res.setHeader("Cache-Control", "no-store");
+    res.status(201).json(await startClaudeUsageLogin(target.connectionId, target.userId).catch((error) => { throw usageLoginFailure(error); }));
+  });
+  router.post("/companies/:companyId/ai-connections/:connectionId/usage-login/:sessionId/code", async (req, res) => {
+    const target = await usageLoginTarget(req, true);
+    const body = z.object({ code: z.string().min(1).max(1024) }).safeParse(req.body);
+    if (!body.success) throw unprocessable("Paste the code claude.ai showed");
+    const result = await completeClaudeUsageLogin(target.connectionId, String(req.params.sessionId), target.userId, body.data.code)
+      .catch((error) => { throw usageLoginFailure(error); });
+    await logActivity(db, {
+      companyId: target.companyId, actorType: "user", actorId: target.userId,
+      action: "ai_connection.usage_login_connected", entityType: "tool_connection", entityId: target.connectionId,
+      details: { plan: result.plan },
+    });
+    res.json({ connected: true, plan: result.plan });
+  });
+  router.delete("/companies/:companyId/ai-connections/:connectionId/usage-login", async (req, res) => {
+    const target = await usageLoginTarget(req, true);
+    await removeClaudeUsageLogin(target.connectionId);
+    await logActivity(db, {
+      companyId: target.companyId, actorType: "user", actorId: target.userId,
+      action: "ai_connection.usage_login_removed", entityType: "tool_connection", entityId: target.connectionId,
+    });
+    res.json({ connected: false, plan: null });
+  });
   router.get(
     "/companies/:companyId/ai-connections/:connectionId/active-runs",
     async (req, res) => {

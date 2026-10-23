@@ -1,6 +1,10 @@
 import type { AiConnectionList, AiConnectionUsage, CreateAiConnection, AiConnectionLoginIntent, LocalAiLoginAttempt, LocalAiLoginStatus } from "@paperclipai/shared";
 import { api } from "./client";
 export const aiConnectionsApi = {
+  usageLogin: (companyId: string, connectionId: string) => api.get<{ connected: boolean; plan: string | null }>(`/companies/${companyId}/ai-connections/${connectionId}/usage-login`),
+  startUsageLogin: (companyId: string, connectionId: string) => api.post<{ sessionId: string; authorizationUrl: string }>(`/companies/${companyId}/ai-connections/${connectionId}/usage-login`, {}),
+  completeUsageLogin: (companyId: string, connectionId: string, sessionId: string, code: string) => api.post<{ connected: boolean; plan: string | null }>(`/companies/${companyId}/ai-connections/${connectionId}/usage-login/${encodeURIComponent(sessionId)}/code`, { code }),
+  removeUsageLogin: (companyId: string, connectionId: string) => api.delete(`/companies/${companyId}/ai-connections/${connectionId}/usage-login`),
   probeUsage: (companyId: string, connectionId: string, grantId?: string) => api.get<AiConnectionUsage>(`/companies/${companyId}/ai-connections/${connectionId}/usage${grantId ? `?grantId=${encodeURIComponent(grantId)}` : ""}`),
   startLocalLogin: (companyId: string, input: AiConnectionLoginIntent & { restart?: boolean }) => api.post<LocalAiLoginAttempt>(`/companies/${companyId}/ai-connections/local/attempts`, input),
   checkLocalLogin: (companyId: string, input: AiConnectionLoginIntent & { localSessionId?: string }) => api.post<LocalAiLoginStatus>(`/companies/${companyId}/ai-connections/local/check`, input),
