@@ -9,6 +9,7 @@ import { fetchCodexQuota } from "@paperclipai/adapter-codex-local/server";
 import { fetchClaudeQuota } from "@paperclipai/adapter-claude-local/server";
 import { aiConnectionService } from "./ai-connections.js";
 import { trackIdleWork } from "./task-admission.js";
+import { claudeUsageToken } from "./claude-usage-login.js";
 
 const accountRequests = new Map<string, { expires: number; result: Promise<ProviderQuotaResult> }>();
 const publicError = "Subscription quota is currently unavailable. Check usage with your provider.";
@@ -94,7 +95,9 @@ export async function fetchCompanyQuotaWindows(db: Db, companyId: string, userId
               windows = await read(auth);
             }
           } else {
-            windows = await fetchClaudeQuota(value, controller.signal);
+            // The stored Claude credential is a setup token, which may not read usage; prefer the
+            // connection's usage-only login when it has one (claude-usage-login.ts).
+            windows = await fetchClaudeQuota(await claudeUsageToken(row.connection.id) ?? value, controller.signal);
           }
           return { ...base, ok: true, windows, capturedAt: new Date().toISOString() };
         } catch (error) {

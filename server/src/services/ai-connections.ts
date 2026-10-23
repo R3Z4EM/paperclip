@@ -45,6 +45,7 @@ import { logger } from "../middleware/logger.js";
 import { logActivity } from "./activity-log.js";
 import { secretService } from "./secrets.js";
 import { probeAiConnectionUsage } from "./ai-connection-usage.js";
+import { claudeUsageToken } from "./claude-usage-login.js";
 
 /** Same human audience displayed by the existing Connections identity controls. */
 function canUseCredential(
@@ -242,7 +243,11 @@ export function aiConnectionService(db: Db) {
       return { ...identity, ...await probeAiConnectionUsage(metadata.data, "") };
     }
     const value = await credential(row);
-    return { ...identity, ...await probeAiConnectionUsage(metadata.data, value) };
+    // A Claude subscription's own credential is a setup token, which may not read usage; prefer
+    // the connection's usage-only login when it has one (claude-usage-login.ts).
+    const usageToken = metadata.data.provider === "anthropic" && metadata.data.method === "subscription"
+      ? await claudeUsageToken(row.connection.id) : null;
+    return { ...identity, ...await probeAiConnectionUsage(metadata.data, usageToken ?? value) };
   }
   async function select(input: {
     companyId: string;
