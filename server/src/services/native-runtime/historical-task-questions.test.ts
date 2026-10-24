@@ -243,18 +243,6 @@ describe("historical task questions", () => {
       .toEqual([expect.objectContaining({ id: f.question.id, status: "expired" })]);
   });
 
-  it("expires old unanswered questions on completion so they cannot linger", async () => {
-    const f = await fixture(); await message(f);
-    await db.update(issues).set({ status: "done" }).where(eq(issues.id, f.issueId));
-    const service = issueThreadInteractionService(db);
-    expect(await service.expirePendingInteractionsForTerminalIssue({ id: f.issueId, companyId: f.companyId, status: "done" }))
-      .toEqual([expect.objectContaining({ id: f.question.id, status: "expired",
-        result: expect.objectContaining({ outcome: "issue_closed", reason: "Closed with the task" }) })]);
-    await db.update(issues).set({ status: "in_progress" }).where(eq(issues.id, f.issueId));
-    expect((await db.select().from(issueThreadInteractions).where(eq(issueThreadInteractions.id, f.question.id)))[0].status)
-      .toBe("expired");
-  });
-
   it("keeps current questions and governed confirmations closed on completion", async () => {
     const f = await fixture();
     const [confirmation] = await db.insert(issueThreadInteractions).values({ companyId: f.companyId, issueId: f.issueId,

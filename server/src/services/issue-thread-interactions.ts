@@ -1,6 +1,6 @@
 import { normalizeEscapedLineBreaks } from "@paperclipai/shared/validators/text";
 import { notifyDeliveryWork, DELIVERY_QUEUES } from "./delivery-work-notifications.js";
-import { historicalQuestionCondition } from "./issue-question-context.js";
+import { activeIssueInteractionCondition, historicalQuestionCondition } from "./issue-question-context.js";
 import {
   currentContinuationOrigins,
   deliveredContinuationCommentIds,
@@ -3059,7 +3059,7 @@ export function issueThreadInteractionService(
             ? {
                 ...row,
                 status: "expired",
-                result: buildAdministrativeOutcomeResult(row, "issue_closed", "Closed with the task"),
+                result: buildAdministrativeOutcomeResult(row, "issue_closed"),
                 resolvedAt: row.updatedAt,
               }
             : row,
@@ -4801,6 +4801,9 @@ export function issueThreadInteractionService(
             eq(issueThreadInteractions.companyId, issue.companyId),
             eq(issueThreadInteractions.issueId, issue.id),
             eq(issueThreadInteractions.status, "pending"),
+            // Completed work retains ordinary historical questions for later
+            // human answers. Cancellation and governed requests still expire.
+            issue.status === "done" ? activeIssueInteractionCondition() : undefined,
           ),
         );
       if (rows.length === 0) return [];
@@ -4839,7 +4842,7 @@ export function issueThreadInteractionService(
               .update(issueThreadInteractions)
               .set({
                 status: "expired",
-                result: buildAdministrativeOutcomeResult(row, "issue_closed", "Closed with the task"),
+                result: buildAdministrativeOutcomeResult(row, "issue_closed"),
                 resolvedByAgentId: actor.agentId ?? null,
                 resolvedByUserId: actor.userId ?? null,
                 resolvedAt: now,
