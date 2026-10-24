@@ -1228,6 +1228,12 @@ export function attentionService(db: Db, serviceOptions: AttentionServiceOptions
         .where(and(
           eq(issueThreadInteractions.companyId, companyId),
           inArray(issueThreadInteractions.status, [...PENDING_INTERACTION_STATUSES]),
+          // Items left on a task that is already done or cancelled cannot be answered.
+          sql`not exists (
+            select 1 from ${issues}
+            where ${issues.id} = ${issueThreadInteractions.issueId}
+              and ${issues.status} in ('done', 'cancelled')
+          )`,
         ))
         .orderBy(desc(issueThreadInteractions.updatedAt), desc(issueThreadInteractions.id));
       // Addressee invokability needs the org graph; the audience line also needs

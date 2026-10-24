@@ -812,9 +812,27 @@ describeEmbeddedPostgres("attention service", () => {
     expect(interactionTitles).not.toContain("Active reviewer question");
   });
 
+  it("leaves out pending questions whose task is done or cancelled", async () => {
+    const { companyId, workerId } = await seedCompany("CLS");
+    for (const status of ["done", "cancelled", "in_progress"] as const) {
+      const issueId = await insertIssue({ companyId, identifier: `CLS-${status}`, title: `Task ${status}`, status });
+      await db.insert(issueThreadInteractions).values({
+        id: randomUUID(), companyId, issueId, kind: "ask_user_questions", status: "pending",
+        title: `Question on ${status}`, createdByAgentId: workerId, payload: { version: 1, questions: [] },
+      });
+    }
+    const feed = await attentionService(db).list(companyId, { userId: "board-user" });
+    const titles = feed.items.filter((item) => item.sourceKind === "issue_thread_interaction")
+      .map((item) => item.subject.title);
+    expect(titles).toContain("Question on in_progress");
+    expect(titles).not.toContain("Question on done");
+    expect(titles).not.toContain("Question on cancelled");
+  });
+
   // PAP-17287: a collapsed queue row offers Accept/Reject before anything fetches
   // the interaction, so the audience the resolution routes will enforce has to
   // ship with the feed item.
+
   it("ships the effective resolver audience with each interaction row", async () => {
     const { companyId, workerId, reviewerId } = await seedCompany("ARA");
     const issueId = await insertIssue({
