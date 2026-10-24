@@ -1166,6 +1166,8 @@ export function attentionService(db: Db, serviceOptions: AttentionServiceOptions
       for (const approval of pendingApprovals) {
         const linkedIssueId = approvalIssueMap.get(approval.id) ?? null;
         if (linkedIssueId && !readableApprovalIssues.has(linkedIssueId)) continue;
+        const linkedStatus = linkedIssueId ? readableApprovalIssues.get(linkedIssueId)?.status : null;
+        if (linkedStatus === "done" || linkedStatus === "cancelled") continue;
         const dedupKey = `approval:${approval.id}`;
         const title = approvalTitle(approval.type, approval.payload);
         add(createItem({

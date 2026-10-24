@@ -832,7 +832,6 @@ describeEmbeddedPostgres("attention service", () => {
   // PAP-17287: a collapsed queue row offers Accept/Reject before anything fetches
   // the interaction, so the audience the resolution routes will enforce has to
   // ship with the feed item.
-
   it("ships the effective resolver audience with each interaction row", async () => {
     const { companyId, workerId, reviewerId } = await seedCompany("ARA");
     const issueId = await insertIssue({
@@ -1608,6 +1607,25 @@ describeEmbeddedPostgres("attention service", () => {
 
     expect(approvalItems).toHaveLength(1);
     expect(approvalItems[0]?.subject.metadata?.issueId).toBe(firstIssueId);
+  });
+
+  it("leaves out pending approvals whose task is done or cancelled", async () => {
+    const { companyId } = await seedCompany("APC");
+    const ids: Record<string, string> = {};
+    for (const status of ["done", "cancelled", "in_progress"] as const) {
+      const issueId = await insertIssue({ companyId, identifier: `APC-${status}`, title: `Task ${status}`, status });
+      const approvalId = randomUUID();
+      ids[status] = approvalId;
+      await db.insert(approvals).values({
+        id: approvalId, companyId, type: "request_board_approval", status: "pending", payload: { title: `Approve ${status}` },
+      });
+      await db.insert(issueApprovals).values({ companyId, issueId, approvalId });
+    }
+    const feed = await attentionService(db).list(companyId, { userId: "board-user" });
+    const keys = feed.items.map((item) => item.dedupKey);
+    expect(keys).toContain(`approval:${ids.in_progress}`);
+    expect(keys).not.toContain(`approval:${ids.done}`);
+    expect(keys).not.toContain(`approval:${ids.cancelled}`);
   });
 
   it("hides snoozed attention rows until snoozedUntil passes, then returns them unconditionally", async () => {
