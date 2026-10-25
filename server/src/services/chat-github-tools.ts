@@ -385,6 +385,21 @@ export async function githubGuestBotConnectionForSession(
   >,
 ): Promise<string | null> {
   if (!session.runId || !session.agentId || !session.issueId) return null;
+  // Only an agent with a GitHub chat endpoint can be running a guest's request. Without one there is
+  // nothing to restrict, so skip the provenance walk: on a task another agent created it refuses
+  // ("Chat tools cannot be inherited by another task"), which failed the whole tool list.
+  const [endpoint] = await db
+    .select({ id: chatEndpoints.id })
+    .from(chatEndpoints)
+    .where(
+      and(
+        eq(chatEndpoints.companyId, session.companyId),
+        eq(chatEndpoints.assignedAgentId, session.agentId),
+        eq(chatEndpoints.provider, "github"),
+      ),
+    )
+    .limit(1);
+  if (!endpoint) return null;
   const [run] = await db
     .select({
       id: heartbeatRuns.id,
