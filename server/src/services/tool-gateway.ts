@@ -914,6 +914,30 @@ type ConnectedCredentialVersionSnapshot = {
   resolvedVersion: number;
 };
 
+// OAuth tokens a connection refreshes by itself (Resend every 15 minutes, Cloudflare hourly). A new
+// version is the same account with the same permissions, so an approval snapshot pins these as
+// present rather than by version (the grant's scopes are pinned instead); otherwise a card approved
+// after the next refresh always fails as "Tool definition or connection changed".
+const ROTATING_OAUTH_CONFIG_PATHS = new Set(["oauth.access_token", "oauth.refresh_token"]);
+
+function pinRotatingCredential(
+  snapshot: ConnectedCredentialVersionSnapshot,
+  configPath: string,
+): ConnectedCredentialVersionSnapshot {
+  return ROTATING_OAUTH_CONFIG_PATHS.has(configPath) && snapshot.resolvedVersion >= 0
+    ? { ...snapshot, resolvedVersion: 0 }
+    : snapshot;
+}
+
+function grantOauthScopes(grant: { providerTenant?: unknown }): Record<string, unknown> {
+  const oauth = asRecord(asRecord(grant.providerTenant)?.oauth) ?? {};
+  return {
+    scopes: oauth.scopes ?? null,
+    strategy: oauth.strategy ?? null,
+    tokenType: oauth.tokenType ?? null,
+  };
+}
+
 const REDACTED_ARGUMENT_SENTINEL = "***REDACTED***";
 
 /** Turn a machine field key (`note_body`, `noteBody`, `note-body`) into a Title-Cased label. */
@@ -4396,40 +4420,46 @@ export function createToolGatewayService(
           ? REMOTE_URL_SECRET_CONFIG_PATH
           : grantRef.configPath;
       headerCredentialVersions.push(
-        await resolveConnectedCredentialVersion(connection, {
-          secretId: grantRef.secretId,
-          versionSelector: grantRef.versionSelector,
-          configPath,
-          refHash: credentialVersionRefHash({
-            kind: typedRef.placement === "url" ? "url" : "header",
-            name: typedRef.name,
+        pinRotatingCredential(
+          await resolveConnectedCredentialVersion(connection, {
             secretId: grantRef.secretId,
-            placement: typedRef.placement,
-            key: typedRef.key,
-            prefix: typedRef.prefix ?? null,
+            versionSelector: grantRef.versionSelector,
             configPath,
+            refHash: credentialVersionRefHash({
+              kind: typedRef.placement === "url" ? "url" : "header",
+              name: typedRef.name,
+              secretId: grantRef.secretId,
+              placement: typedRef.placement,
+              key: typedRef.key,
+              prefix: typedRef.prefix ?? null,
+              configPath,
+            }),
+            requireResolved: options.requireResolved,
           }),
-          requireResolved: options.requireResolved,
-        }),
+          configPath,
+        ),
       );
     }
 
     for (const ref of grant.credentialSecretRefs ?? []) {
       const typedRef = ref as ToolCredentialSecretRef;
       credentialSecretVersions.push(
-        await resolveConnectedCredentialVersion(connection, {
-          secretId: typedRef.secretId,
-          versionSelector: typedRef.versionSelector,
-          configPath: typedRef.configPath,
-          refHash: credentialVersionRefHash({
-            kind: "secret_ref",
+        pinRotatingCredential(
+          await resolveConnectedCredentialVersion(connection, {
             secretId: typedRef.secretId,
+            versionSelector: typedRef.versionSelector,
             configPath: typedRef.configPath,
-            required: typedRef.required ?? true,
-            label: typedRef.label ?? null,
+            refHash: credentialVersionRefHash({
+              kind: "secret_ref",
+              secretId: typedRef.secretId,
+              configPath: typedRef.configPath,
+              required: typedRef.required ?? true,
+              label: typedRef.label ?? null,
+            }),
+            requireResolved: options.requireResolved,
           }),
-          requireResolved: options.requireResolved,
-        }),
+          typedRef.configPath,
+        ),
       );
     }
 
@@ -5732,6 +5762,7 @@ export function createToolGatewayService(
       ...(isBrowserUseConnection(row.connection) ? { browserSettingsHash: stableHash(await browserUseService(db).getSettings(session.companyId, grant.id)) } : {}),
       credentialGrantId: grant.id,
       credentialGrantRefsHash: stableHash(grant.credentialSecretRefs ?? []),
+      credentialGrantScopesHash: stableHash(grantOauthScopes(grant)),
       headerCredentialVersions: credentialVersions.headerCredentialVersions,
       credentialSecretVersions: credentialVersions.credentialSecretVersions,
       catalogEntryId: row.entry.id,
