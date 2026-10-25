@@ -929,6 +929,18 @@ function pinRotatingCredential(
     : snapshot;
 }
 
+// Every OAuth refresh also rewrites these stamps in the connection's config, so the approval
+// snapshot hashes the config without them; the address, client and scopes stay pinned.
+const OAUTH_REFRESH_STAMPS = ["expiresAt", "refreshedAt"];
+
+function configWithoutRefreshStamps(config: unknown): Record<string, unknown> {
+  const copy = structuredClone(asRecord(config) ?? {});
+  for (const oauth of [asRecord(copy.oauth), asRecord(asRecord(copy.providerMetadata)?.oauth)]) {
+    if (oauth) for (const key of OAUTH_REFRESH_STAMPS) delete oauth[key];
+  }
+  return copy;
+}
+
 function grantOauthScopes(grant: { providerTenant?: unknown }): Record<string, unknown> {
   const oauth = asRecord(asRecord(grant.providerTenant)?.oauth) ?? {};
   return {
@@ -5751,9 +5763,9 @@ export function createToolGatewayService(
       connectionStatus: row.connection.status,
       connectionEnabled: row.connection.enabled,
       connectionTransport: row.connection.transport,
-      connectionConfigHash: stableHash(row.connection.config ?? {}),
+      connectionConfigHash: stableHash(configWithoutRefreshStamps(row.connection.config)),
       connectionTransportConfigHash: stableHash(
-        row.connection.transportConfig ?? {},
+        configWithoutRefreshStamps(row.connection.transportConfig),
       ),
       credentialRefsHash: stableHash(row.connection.credentialRefs ?? []),
       credentialSecretRefsHash: stableHash(
